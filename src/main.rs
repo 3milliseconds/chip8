@@ -1,6 +1,8 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
 
+use std::env;
+
 use log::debug;
 use minifb::Key;
 use minifb::{Window, WindowOptions};
@@ -11,7 +13,8 @@ const HEIGHT: usize = 32;
 
 fn main() {
     env_logger::init();
-    let mut app = App::init();
+    let path = env::args().nth(1).expect("Usage: chip8 <rom path>");
+    let mut app = App::init(path);
     app.start();
 }
 
@@ -48,8 +51,8 @@ struct App {
 }
 
 impl App {
-    fn init() -> App {
-        let input: Vec<u8> = std::fs::read("input/IBM Logo.ch8").unwrap();
+    fn init(input_path: String) -> App {
+        let input: Vec<u8> = std::fs::read(input_path).expect("Failed to read file");
 
         let buffer: Vec<u32> = vec![0; WIDTH * HEIGHT * 100];
 
@@ -354,14 +357,13 @@ impl Chip8 {
                 state.memory[pos + 2] = o;
             }
             _ if (opcode & 0xF0FF) == 0xF055 => {
-                debug!(
-                    "{:#06x} Store registers V0 through Vx in memory starting at location I",
-                    opcode
-                );
                 let offset = state.i as usize;
                 let (x, _) = opcode.get_xy();
-                let end = state.v[x] as usize;
-                state.memory[offset..offset + 1 + end].copy_from_slice(&state.v[0..end + 1]);
+                debug!(
+                    "{:#06x} Store registers V0 through V[{x}] in memory starting at location I({:#06x})",
+                    opcode, state.i
+                );
+                state.memory[offset..offset + 1 + x].copy_from_slice(&state.v[0..x + 1]);
             }
             _ if (opcode & 0xF0FF) == 0xF065 => {
                 debug!(
