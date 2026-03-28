@@ -197,7 +197,7 @@ impl Chip8 {
             _ if (opcode & 0xF000) == 0x7000 => {
                 let (x, kk) = opcode.get_xkk();
                 debug!("{:#06x} Set V[{x}] = V{x} + {kk}", opcode);
-                state.v[x as usize] += kk;
+                state.v[x as usize] = state.v[x as usize].wrapping_add(kk);
             }
             _ if (opcode & 0xF00F) == 0x8000 => {
                 debug!("{:#06x} Set Vx = Vy", opcode);
@@ -366,14 +366,15 @@ impl Chip8 {
                 state.memory[offset..offset + 1 + x].copy_from_slice(&state.v[0..x + 1]);
             }
             _ if (opcode & 0xF0FF) == 0xF065 => {
+                let (x, _) = opcode.get_xy();
                 debug!(
-                    "{:#06x} Read registers V0 through Vx from memory starting at location I",
+                    "{:#06x} Read registers V0 through V[{x}] from memory starting at location I",
                     opcode
                 );
                 let offset = state.i as usize;
                 state
-                    .v
-                    .copy_from_slice(&state.memory[offset..offset + 0x10]);
+                    .v[0..x + 1]
+                    .copy_from_slice(&state.memory[offset..offset + x + 1]);
             }
             _ => {
                 panic!("{:#06x} Unknown instruction", opcode);
