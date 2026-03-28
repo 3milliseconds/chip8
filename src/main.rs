@@ -2,8 +2,6 @@
 #![forbid(unsafe_code)]
 
 use log::debug;
-use log::error;
-use log::info;
 use minifb::Key;
 use minifb::{Window, WindowOptions};
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
@@ -21,10 +19,10 @@ struct CpuState {
     memory: [u8; 4096],
     v: [u8; 16],
     i: u16,
-    dt: u8,
-    st: u16,
-    pc: u16,
-    sp: u8,
+    delay_timer: u8,
+    sound_timer: u16,
+    program_counter: u16,
+    stack: Vec<u16>,
     rng: SmallRng,
 }
 
@@ -34,10 +32,10 @@ impl CpuState {
             memory: [0; 4096],
             v: [0; 16],
             i: 0,
-            dt: 0,
-            st: 0,
-            pc: 0x200,
-            sp: 0,
+            delay_timer: 0,
+            sound_timer: 0,
+            program_counter: 0x200,
+            stack: Vec::new(),
             rng: SmallRng::seed_from_u64(12345),
         };
     }
@@ -85,8 +83,7 @@ impl App {
                 for j in 0..HEIGHT {
                     let bit = self.chip8.display[i + WIDTH * j];
                     if bit != 0 && bit != 1 {
-                        error!("illegal bit value");
-                        return;
+                        panic!("illegal bit value");
                     }
                     for k in 0..10 {
                         for l in 0..10 {
@@ -141,45 +138,52 @@ impl Chip8 {
         let state: &mut CpuState = &mut self.cpu_state;
         let diplay: &mut [u8; _] = &mut self.display;
 
-        let pc: usize = state.pc as usize;
+        let pc: usize = state.program_counter as usize;
         let opcode: u16 = ((state.memory[pc] as u16) << 8) | (state.memory[pc + 1] as u16);
         match opcode {
             0x00E0 => {
                 debug!("{:#06x} Clear the display", opcode);
+                for i in 0..diplay.len() {
+                    diplay[i] = 0;
+                }
             }
             0x00EE => {
                 debug!("{:#06x} Return from sub routine", opcode);
-                todo!("not implemented");
+                let return_address = state.stack.pop().expect("Can't return to empty stack");
+                state.program_counter = return_address;
             }
             _ if (opcode & 0xF000) == 0x1000 => {
                 let nnn = opcode & 0x0FFF;
                 debug!("{:#06x} Sets the program counter to {nnn}", opcode);
-                state.pc = opcode & 0x0FFF;
+                state.program_counter = opcode & 0x0FFF;
                 return;
             }
             _ if (opcode & 0xF000) == 0x2000 => {
-                debug!("Call subroutine at nnn");
-                todo!("not implemented");
+                let nnn = opcode & 0x0FFF;
+                debug!("Call subroutine at {nnn}");
+                state.stack.push(state.program_counter);
+                state.program_counter = nnn;
+                return;
             }
             _ if (opcode & 0xF000) == 0x3000 => {
                 let (x, kk) = opcode.get_xkk();
                 debug!("{:#06x} Skip next instruction if V[{x}] = {kk}", opcode);
                 if state.v[x] == kk {
-                    state.pc += 2;
+                    state.program_counter += 2;
                 }
             }
             _ if (opcode & 0xF000) == 0x4000 => {
                 let (x, kk) = opcode.get_xkk();
                 debug!("{:#06x} Skip next instruction if V[{x}] != {kk}", opcode);
-                if state.v[x] == kk {
-                    state.pc += 2;
+                if state.v[x] != kk {
+                    state.program_counter += 2;
                 }
             }
             _ if (opcode & 0xF000) == 0x5000 => {
                 let (x, y) = opcode.get_xy();
                 debug!("{:#06x} Skip next instruction if V[{x}] = V[{y}]", opcode);
                 if state.v[x] == state.v[y] {
-                    state.pc += 2;
+                    state.program_counter += 2;
                 }
             }
             _ if (opcode & 0xF000) == 0x6000 => {
@@ -200,12 +204,17 @@ impl Chip8 {
             _ if (opcode & 0xF00F) == 0x8001 => {
                 debug!("{:#06x} Set Vx = Vx OR Vy", opcode);
                 let (x, y) = opcode.get_xy();
-                state.v[x as usize] = state.v[x as usize] ^ state.v[y as usize];
+                state.v[x as usize] = state.v[x as usize] | state.v[y as usize];
             }
-            _ if (opcode & 0xF00F) == 0x8003 => {
+            _ if (opcode & 0xF00F) == 0x8002 => {
                 debug!("{:#06x} Set Vx = Vx AND Vy", opcode);
                 let (x, y) = opcode.get_xy();
                 state.v[x as usize] = state.v[x as usize] & state.v[y as usize];
+            }
+            _ if (opcode & 0xF00F) == 0x8003 => {
+                debug!("{:#06x} Set Vx = Vx XOR Vy", opcode);
+                let (x, y) = opcode.get_xy();
+                state.v[x as usize] = state.v[x as usize] ^ state.v[y as usize];
             }
             _ if (opcode & 0xF00F) == 0x8004 => {
                 debug!("{:#06x} Set Vx = Vx + Vy, set VF = carry", opcode);
@@ -244,7 +253,7 @@ impl Chip8 {
                 let (x, y) = opcode.get_xy();
                 debug!("{:#06x} Skip next instruction if V[{x}] != V[{y}]", opcode);
                 if state.v[x] != state.v[y] {
-                    state.pc += 2;
+                    state.program_counter += 2;
                 }
             }
             _ if (opcode & 0xF000) == 0xA000 => {
@@ -254,7 +263,7 @@ impl Chip8 {
             }
             _ if (opcode & 0xF000) == 0xB000 => {
                 debug!("{:#06x} Jump to location nnn + V0", opcode);
-                state.pc = opcode.get_nnn() + (state.v[0] as u16);
+                state.program_counter = opcode.get_nnn() + (state.v[0] as u16);
             }
             _ if (opcode & 0xF000) == 0xC000 => {
                 debug!("{:#06x} Set Vx = random byte AND kk", opcode);
@@ -299,7 +308,7 @@ impl Chip8 {
             _ if (opcode & 0xF0FF) == 0xF007 => {
                 debug!("{:#06x} Set Vx = delay timer value", opcode);
                 let (x, _) = opcode.get_xy();
-                state.v[x] = state.dt as u8;
+                state.v[x] = state.delay_timer as u8;
             }
             _ if (opcode & 0xF0FF) == 0xF00A => {
                 debug!(
@@ -310,12 +319,12 @@ impl Chip8 {
             _ if (opcode & 0xF0FF) == 0xF015 => {
                 debug!("{:#06x} Set delay timer = Vx", opcode);
                 let (x, _) = opcode.get_xy();
-                state.dt = state.v[x]
+                state.delay_timer = state.v[x]
             }
             _ if (opcode & 0xF0FF) == 0xF018 => {
                 debug!("{:#06x} Set sound timer = Vx", opcode);
                 let (x, _) = opcode.get_xy();
-                state.dt = state.v[x];
+                state.sound_timer = state.v[x] as u16;
             }
             _ if (opcode & 0xF0FF) == 0xF01E => {
                 debug!("{:#06x} Set I = I + Vx", opcode);
@@ -323,7 +332,9 @@ impl Chip8 {
                 state.i = state.i + (state.v[x] as u16);
             }
             _ if (opcode & 0xF0FF) == 0xF029 => {
-                debug!("{:#06x} Set I = location of sprite for digit Vx", opcode)
+                debug!("{:#06x} Set I = location of sprite for digit Vx", opcode);
+                let (x, _) = opcode.get_xy();
+                state.i = (state.v[x] as u16) * 5;
             }
             _ if (opcode & 0xF0FF) == 0xF033 => {
                 debug!(
@@ -348,7 +359,9 @@ impl Chip8 {
                     opcode
                 );
                 let offset = state.i as usize;
-                state.memory[offset..offset + 0x10].copy_from_slice(&state.v);
+                let (x, _) = opcode.get_xy();
+                let end = state.v[x] as usize;
+                state.memory[offset..offset + 1 + end].copy_from_slice(&state.v[0..end + 1]);
             }
             _ if (opcode & 0xF0FF) == 0xF065 => {
                 debug!(
@@ -360,13 +373,11 @@ impl Chip8 {
                     .v
                     .copy_from_slice(&state.memory[offset..offset + 0x10]);
             }
-
             _ => {
-                error!("{:#06x} Unknown instruction", opcode);
-                return;
+                panic!("{:#06x} Unknown instruction", opcode);
             }
         };
-        state.pc += 2;
+        state.program_counter += 2;
     }
 }
 
