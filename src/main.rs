@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::env;
 
-use log::debug;
+use log::{debug, warn};
 use minifb::Key;
 use minifb::{Window, WindowOptions};
 use rand::{RngExt, SeedableRng, rngs::SmallRng};
@@ -102,7 +102,7 @@ impl App {
             for (&key, &value) in self.key_map.iter() {
                 keys[value] = self.window.is_key_down(key);
             }
-            while count < 100 {
+            while count < 10 {
                 self.chip8.step(keys);
                 count += 1;
             }
@@ -116,6 +116,12 @@ impl App {
                         }
                     }
                 }
+            }
+            if self.chip8.cpu_state.delay_timer != 0 {
+                self.chip8.cpu_state.delay_timer -= 1;
+            }
+            if self.chip8.cpu_state.sound_timer != 0 {
+                self.chip8.cpu_state.sound_timer -= 1;
             }
             self.window
                 .update_with_buffer(&self.buffer, WIDTH * 10, HEIGHT * 10)
@@ -413,7 +419,7 @@ impl Chip8 {
                 state.v[0..x + 1].copy_from_slice(&state.memory[offset..offset + x + 1]);
             }
             _ => {
-                panic!("{:#06x} Unknown instruction", opcode);
+                warn!("{:#06x} Unknown instruction", opcode);
             }
         };
         state.program_counter += 2;
