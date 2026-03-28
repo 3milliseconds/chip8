@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
 
+use log::debug;
 use log::error;
 use log::info;
 use minifb::Key;
@@ -82,16 +83,21 @@ impl App {
             }
             for i in 0..WIDTH {
                 for j in 0..HEIGHT {
-                    let bit = self.chip8.display[i];
+                    let bit = self.chip8.display[i + WIDTH * j];
+                    if bit != 0 && bit != 1 {
+                        error!("illegal bit value");
+                        return;
+                    }
                     for k in 0..10 {
                         for l in 0..10 {
-                            self.buffer[(i * 10 + k) + (j * 10 + l) * WIDTH * 10] = bit as u32;
+                            self.buffer[(i * 10 + k) + (j * 10 + l) * WIDTH * 10] =
+                                if bit == 1 { 0x00ffffff } else { 0x0 };
                         }
                     }
                 }
             }
             self.window
-                .update_with_buffer(&self.buffer, WIDTH, HEIGHT)
+                .update_with_buffer(&self.buffer, WIDTH * 10, HEIGHT * 10)
                 .unwrap();
         }
     }
@@ -139,119 +145,119 @@ impl Chip8 {
         let opcode: u16 = ((state.memory[pc] as u16) << 8) | (state.memory[pc + 1] as u16);
         match opcode {
             0x00E0 => {
-                info!("{:#06x} Clear the display", opcode);
+                debug!("{:#06x} Clear the display", opcode);
             }
             0x00EE => {
-                info!("{:#06x} Return from sub routine", opcode);
+                debug!("{:#06x} Return from sub routine", opcode);
                 todo!("not implemented");
             }
             _ if (opcode & 0xF000) == 0x1000 => {
                 let nnn = opcode & 0x0FFF;
-                info!("{:#06x} Sets the program counter to {nnn}", opcode);
+                debug!("{:#06x} Sets the program counter to {nnn}", opcode);
                 state.pc = opcode & 0x0FFF;
                 return;
             }
             _ if (opcode & 0xF000) == 0x2000 => {
-                info!("Call subroutine at nnn");
+                debug!("Call subroutine at nnn");
                 todo!("not implemented");
             }
             _ if (opcode & 0xF000) == 0x3000 => {
                 let (x, kk) = opcode.get_xkk();
-                info!("{:#06x} Skip next instruction if V[{x}] = {kk}", opcode);
+                debug!("{:#06x} Skip next instruction if V[{x}] = {kk}", opcode);
                 if state.v[x] == kk {
                     state.pc += 2;
                 }
             }
             _ if (opcode & 0xF000) == 0x4000 => {
                 let (x, kk) = opcode.get_xkk();
-                info!("{:#06x} Skip next instruction if V[{x}] != {kk}", opcode);
+                debug!("{:#06x} Skip next instruction if V[{x}] != {kk}", opcode);
                 if state.v[x] == kk {
                     state.pc += 2;
                 }
             }
             _ if (opcode & 0xF000) == 0x5000 => {
                 let (x, y) = opcode.get_xy();
-                info!("{:#06x} Skip next instruction if V[{x}] = V[{y}]", opcode);
+                debug!("{:#06x} Skip next instruction if V[{x}] = V[{y}]", opcode);
                 if state.v[x] == state.v[y] {
                     state.pc += 2;
                 }
             }
             _ if (opcode & 0xF000) == 0x6000 => {
                 let (x, kk) = opcode.get_xkk();
-                info!("{:#06x} Set V[{x}] = {kk}", opcode);
+                debug!("{:#06x} Set V[{x}] = {kk}", opcode);
                 state.v[x] = kk;
             }
             _ if (opcode & 0xF000) == 0x7000 => {
                 let (x, kk) = opcode.get_xkk();
-                info!("{:#06x} Set V[{x}] = V{x} + {kk}", opcode);
+                debug!("{:#06x} Set V[{x}] = V{x} + {kk}", opcode);
                 state.v[x as usize] += kk;
             }
             _ if (opcode & 0xF00F) == 0x8000 => {
-                info!("{:#06x} Set Vx = Vy", opcode);
+                debug!("{:#06x} Set Vx = Vy", opcode);
                 let (x, y) = opcode.get_xy();
                 state.v[x as usize] = state.v[y as usize];
             }
             _ if (opcode & 0xF00F) == 0x8001 => {
-                info!("{:#06x} Set Vx = Vx OR Vy", opcode);
+                debug!("{:#06x} Set Vx = Vx OR Vy", opcode);
                 let (x, y) = opcode.get_xy();
                 state.v[x as usize] = state.v[x as usize] ^ state.v[y as usize];
             }
             _ if (opcode & 0xF00F) == 0x8003 => {
-                info!("{:#06x} Set Vx = Vx AND Vy", opcode);
+                debug!("{:#06x} Set Vx = Vx AND Vy", opcode);
                 let (x, y) = opcode.get_xy();
                 state.v[x as usize] = state.v[x as usize] & state.v[y as usize];
             }
             _ if (opcode & 0xF00F) == 0x8004 => {
-                info!("{:#06x} Set Vx = Vx + Vy, set VF = carry", opcode);
+                debug!("{:#06x} Set Vx = Vx + Vy, set VF = carry", opcode);
                 let (x, y) = opcode.get_xy();
                 let carry;
                 (state.v[x], carry) = state.v[x].overflowing_add(state.v[y]);
                 state.v[0xf] = if carry { 1 } else { 0 }
             }
             _ if (opcode & 0xF00F) == 0x8005 => {
-                info!("{:#06x} Set Vx = Vx - Vy, set VF = NOT borrow", opcode);
+                debug!("{:#06x} Set Vx = Vx - Vy, set VF = NOT borrow", opcode);
                 let (x, y) = opcode.get_xy();
                 let overflow: bool;
                 (state.v[x], overflow) = state.v[x].overflowing_sub(state.v[y]);
                 state.v[0xf] = if !overflow { 1 } else { 0 };
             }
             _ if (opcode & 0xF00F) == 0x8006 => {
-                info!("{:#06x} Set Vx = Vx SHR 1", opcode);
+                debug!("{:#06x} Set Vx = Vx SHR 1", opcode);
                 let (x, _) = opcode.get_xy();
                 state.v[0xf] = if state.v[x] & 0x1 == 1 { 1 } else { 0 };
                 state.v[x] = state.v[x] >> 1;
             }
             _ if (opcode & 0xF00F) == 0x8007 => {
-                info!("{:#06x} Set Vx = Vy - Vx, set VF = NOT borrow", opcode);
+                debug!("{:#06x} Set Vx = Vy - Vx, set VF = NOT borrow", opcode);
                 let (x, y) = opcode.get_xy();
                 let overflow: bool;
                 (state.v[x], overflow) = state.v[y].overflowing_sub(state.v[x]);
                 state.v[0xf] = if !overflow { 1 } else { 0 };
             }
             _ if (opcode & 0xF00F) == 0x800E => {
-                info!("{:#06x} Set Vx = Vx SHL 1", opcode);
+                debug!("{:#06x} Set Vx = Vx SHL 1", opcode);
                 let (x, _) = opcode.get_xy();
                 state.v[0xf] = if (state.v[x] & 0x80) == 0x80 { 1 } else { 0 };
                 state.v[x] = state.v[x] << 1;
             }
             _ if (opcode & 0xF000) == 0x9000 => {
                 let (x, y) = opcode.get_xy();
-                info!("{:#06x} Skip next instruction if V[{x}] != V[{y}]", opcode);
+                debug!("{:#06x} Skip next instruction if V[{x}] != V[{y}]", opcode);
                 if state.v[x] != state.v[y] {
                     state.pc += 2;
                 }
             }
             _ if (opcode & 0xF000) == 0xA000 => {
                 let nnn = opcode.get_nnn();
-                info!("{:#06x} Set I = {:#06x}", opcode, nnn);
+                debug!("{:#06x} Set I = {:#06x}", opcode, nnn);
                 state.i = nnn;
             }
             _ if (opcode & 0xF000) == 0xB000 => {
-                info!("{:#06x} Jump to location nnn + V0", opcode);
+                debug!("{:#06x} Jump to location nnn + V0", opcode);
                 state.pc = opcode.get_nnn() + (state.v[0] as u16);
             }
             _ if (opcode & 0xF000) == 0xC000 => {
-                info!("{:#06x} Set Vx = random byte AND kk", opcode);
+                debug!("{:#06x} Set Vx = random byte AND kk", opcode);
                 let (x, kk) = opcode.get_xkk();
                 state.v[x] = state.rng.random::<u8>() & kk;
             }
@@ -259,7 +265,7 @@ impl Chip8 {
                 let (x, y) = opcode.get_xy();
                 let (vx, vy) = (state.v[x] as usize, state.v[y] as usize);
                 let n: u16 = opcode & 0xF;
-                info!(
+                debug!(
                     "{:#06x} Display {n}-byte sprite starting at memory location I({:06x}) at (Vx, Vy), set VF = collision",
                     opcode, state.i
                 );
@@ -270,58 +276,57 @@ impl Chip8 {
                     let byte = *byte;
                     for bit_pos in 0..=7 {
                         let bit = (byte >> (7 - bit_pos)) & 1;
-                        diplay[((vx + bit_pos) % WIDTH) + ((vy + index) % HEIGHT) * WIDTH] ^= bit;
-                        if diplay[((vx + bit_pos) % WIDTH) + ((vy + index) % HEIGHT) * WIDTH] == 0
-                            && bit == 1
-                        {
+                        let array_pos = ((vx + bit_pos) % WIDTH) + ((vy + index) % HEIGHT) * WIDTH;
+                        diplay[array_pos] ^= bit;
+                        if diplay[array_pos] == 0 && bit == 1 {
                             state.v[0xf] = 1;
                         }
                     }
                 }
             }
             _ if (opcode & 0xF0FF) == 0xE09E => {
-                info!(
+                debug!(
                     "{:#06x} Skip next instruction if key with the value of Vx is pressed",
                     opcode
                 );
             }
             _ if (opcode & 0xF0FF) == 0xE0A1 => {
-                info!(
+                debug!(
                     "{:#06x} Skip next instruction if key with the value of Vx is not pressed",
                     opcode
                 )
             }
             _ if (opcode & 0xF0FF) == 0xF007 => {
-                info!("{:#06x} Set Vx = delay timer value", opcode);
+                debug!("{:#06x} Set Vx = delay timer value", opcode);
                 let (x, _) = opcode.get_xy();
                 state.v[x] = state.dt as u8;
             }
             _ if (opcode & 0xF0FF) == 0xF00A => {
-                info!(
+                debug!(
                     "{:#06x} Wait for a key press, store the value of the key in Vx",
                     opcode
                 )
             }
             _ if (opcode & 0xF0FF) == 0xF015 => {
-                info!("{:#06x} Set delay timer = Vx", opcode);
+                debug!("{:#06x} Set delay timer = Vx", opcode);
                 let (x, _) = opcode.get_xy();
                 state.dt = state.v[x]
             }
             _ if (opcode & 0xF0FF) == 0xF018 => {
-                info!("{:#06x} Set sound timer = Vx", opcode);
+                debug!("{:#06x} Set sound timer = Vx", opcode);
                 let (x, _) = opcode.get_xy();
                 state.dt = state.v[x];
             }
             _ if (opcode & 0xF0FF) == 0xF01E => {
-                info!("{:#06x} Set I = I + Vx", opcode);
+                debug!("{:#06x} Set I = I + Vx", opcode);
                 let (x, _) = opcode.get_xy();
                 state.i = state.i + (state.v[x] as u16);
             }
             _ if (opcode & 0xF0FF) == 0xF029 => {
-                info!("{:#06x} Set I = location of sprite for digit Vx", opcode)
+                debug!("{:#06x} Set I = location of sprite for digit Vx", opcode)
             }
             _ if (opcode & 0xF0FF) == 0xF033 => {
-                info!(
+                debug!(
                     "{:#06x} Store BCD representation of Vx in memory locations I, I+1, and I+2",
                     opcode
                 );
@@ -338,7 +343,7 @@ impl Chip8 {
                 state.memory[pos + 2] = o;
             }
             _ if (opcode & 0xF0FF) == 0xF055 => {
-                info!(
+                debug!(
                     "{:#06x} Store registers V0 through Vx in memory starting at location I",
                     opcode
                 );
@@ -346,7 +351,7 @@ impl Chip8 {
                 state.memory[offset..offset + 0x10].copy_from_slice(&state.v);
             }
             _ if (opcode & 0xF0FF) == 0xF065 => {
-                info!(
+                debug!(
                     "{:#06x} Read registers V0 through Vx from memory starting at location I",
                     opcode
                 );
