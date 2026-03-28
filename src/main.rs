@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
 
+use std::collections::HashMap;
 use std::env;
 
 use log::debug;
@@ -48,6 +49,7 @@ struct App {
     chip8: Chip8,
     window: Window,
     buffer: Vec<u32>,
+    key_map: HashMap<Key, usize>,
 }
 
 impl App {
@@ -67,27 +69,46 @@ impl App {
         });
 
         window.set_target_fps(60);
-
+        let key_map: HashMap<Key, usize> = HashMap::from([
+            (Key::Key1, 0x1),
+            (Key::Key2, 0x2),
+            (Key::Key3, 0x3),
+            (Key::Key4, 0xC),
+            (Key::Q, 0x4),
+            (Key::W, 0x5),
+            (Key::E, 0x6),
+            (Key::R, 0xd),
+            (Key::A, 0x7),
+            (Key::S, 0x8),
+            (Key::D, 0x9),
+            (Key::F, 0xe),
+            (Key::Z, 0xa),
+            (Key::X, 0x0),
+            (Key::C, 0xb),
+            (Key::V, 0xf),
+        ]);
         return App {
             chip8: Chip8::init(input),
             window: window,
             buffer: buffer,
+            key_map: key_map,
         };
     }
 
     fn start(&mut self) {
+        let mut keys: [bool; 16] = [false; 16];
         while self.window.is_open() && !self.window.is_key_down(Key::Escape) {
             let mut count = 0;
-            while count < 10 {
-                self.chip8.step();
+            for (&key, &value) in self.key_map.iter() {
+                keys[value] = self.window.is_key_down(key);
+            }
+            while count < 100 {
+                self.chip8.step(keys);
                 count += 1;
             }
             for i in 0..WIDTH {
                 for j in 0..HEIGHT {
                     let bit = self.chip8.display[i + WIDTH * j];
-                    if bit != 0 && bit != 1 {
-                        panic!("illegal bit value");
-                    }
                     for k in 0..10 {
                         for l in 0..10 {
                             self.buffer[(i * 10 + k) + (j * 10 + l) * WIDTH * 10] =
@@ -137,7 +158,7 @@ impl Chip8 {
         };
     }
 
-    fn step(&mut self) {
+    fn step(&mut self, keys: [bool; 16]) {
         let state: &mut CpuState = &mut self.cpu_state;
         let diplay: &mut [u8; _] = &mut self.display;
 
@@ -297,16 +318,24 @@ impl Chip8 {
                 }
             }
             _ if (opcode & 0xF0FF) == 0xE09E => {
+                let (x, _) = opcode.get_xy();
                 debug!(
-                    "{:#06x} Skip next instruction if key with the value of Vx is pressed",
+                    "{:#06x} Skip next instruction if key with the value of V[{x}] is pressed",
                     opcode
                 );
+                if keys[state.v[x] as usize] {
+                    state.program_counter += 2;
+                }
             }
             _ if (opcode & 0xF0FF) == 0xE0A1 => {
+                let (x, _) = opcode.get_xy();
                 debug!(
-                    "{:#06x} Skip next instruction if key with the value of Vx is not pressed",
+                    "{:#06x} Skip next instruction if key with the value of V[{x}] is not pressed",
                     opcode
-                )
+                );
+                if !keys[state.v[x] as usize] {
+                    state.program_counter += 2;
+                }
             }
             _ if (opcode & 0xF0FF) == 0xF007 => {
                 debug!("{:#06x} Set Vx = delay timer value", opcode);
@@ -314,10 +343,19 @@ impl Chip8 {
                 state.v[x] = state.delay_timer as u8;
             }
             _ if (opcode & 0xF0FF) == 0xF00A => {
+                let (x, _) = opcode.get_xy();
                 debug!(
-                    "{:#06x} Wait for a key press, store the value of the key in Vx",
+                    "{:#06x} Wait for a key press, store the value of the key in V[{x}]",
                     opcode
-                )
+                );
+                for i in 0u8..16 {
+                    if keys[i as usize] {
+                        state.v[x] = i;
+                        state.program_counter += 2;
+                        return;
+                    }
+                }
+                return;
             }
             _ if (opcode & 0xF0FF) == 0xF015 => {
                 debug!("{:#06x} Set delay timer = Vx", opcode);
@@ -372,9 +410,7 @@ impl Chip8 {
                     opcode
                 );
                 let offset = state.i as usize;
-                state
-                    .v[0..x + 1]
-                    .copy_from_slice(&state.memory[offset..offset + x + 1]);
+                state.v[0..x + 1].copy_from_slice(&state.memory[offset..offset + x + 1]);
             }
             _ => {
                 panic!("{:#06x} Unknown instruction", opcode);
